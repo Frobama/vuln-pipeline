@@ -1,0 +1,12 @@
+services:
+  juiceshop:
+    image: bkimminich/juice-shop
+    container_name: juiceshop
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - vulnnet
+
+networks:
+  vulnnet:
+    name: vulnnet
