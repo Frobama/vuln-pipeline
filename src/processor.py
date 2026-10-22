@@ -50,9 +50,9 @@ def clean_html(text: str) -> str:
 
 
 def normalize_url(uri: str) -> str:
-    """Descarta query string y fragmento: /a?id=1 y /a?id=2 son el mismo hallazgo."""
+    """Descarta query string y fragmento, y trata la ruta vacía como '/'."""
     parts = urlsplit(uri)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path or "/", "", ""))
 
 
 def make_fingerprint(alert_ref: str, method: str, url: str, param: str) -> str:

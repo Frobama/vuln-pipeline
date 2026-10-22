@@ -1,0 +1,144 @@
+import argparse
+import json
+import os
+import re
+import time
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from src.jira_client import JiraClient, JiraError
+
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_FINDINGS = ROOT / "reports" / "findings.json"
+BASE_LABEL = "vulnpipe"
+FINGERPRINT_PREFIX = "fp-"
+MAX_CONSECUTIVE_FAILURES = 3
+
+def _text(text: str, bold: bool = False) -> dict:
+    node = {"type": "text", "text": text}  # ADF no admite nodos de texto vacíos
+    if bold:
+        node["marks"] = [{"type": "strong"}]
+    return node
+
+def _paragraph(*nodes: dict) -> dict:
+    return {"type": "paragraph", "content": list(nodes)}
+
+
+def _heading(text: str) -> dict:
+    return {"type": "heading", "attrs": {"level": 3}, "content": [_text(text)]}
+
+
+def _paragraphs(text: str) -> list[dict]:
+    return [_paragraph(_text(chunk.strip())) for chunk in re.split(r"\n\s*\n", text) if chunk.strip()]
+
+
+def _field(label: str, value: str) -> dict:
+    return _paragraph(_text(f"{label}: ", bold=True), _text(value))
+
+
+def build_description(f: dict) -> dict:
+    blocks = [
+        _field("Severidad", f"{f['severity']} (confianza ZAP: {f['confidence']})"),
+        _field("Categoría OWASP", f["owasp"]),
+        _field("URL afectada", f"{f['method']} {f['url']}"),
+    ]
+    if f.get("param"):
+        blocks.append(_field("Parámetro", f["param"]))
+    if f.get("cwe_id"):
+        blocks.append(_field("CWE", f"CWE-{f['cwe_id']}"))
+    if f.get("description"):
+        blocks += [_heading("Descripción"), *_paragraphs(f["description"])]
+    if f.get("solution"):
+        blocks += [_heading("Remediación recomendada"), *_paragraphs(f["solution"])]
+    if f.get("evidence"):
+        blocks += [_heading("Evidencia"), {"type": "codeBlock", "content": [_text(f["evidence"][:500])]}]
+    if f.get("reference"):
+        blocks += [_heading("Referencias"), *_paragraphs(f["reference"])]
+    blocks.append(
+        _paragraph(_text(f"ID del hallazgo: {f['fingerprint']} · generado automáticamente por vuln-pipeline a partir de un escaneo ZAP."))
+    )
+    return {"type": "doc", "version": 1, "content": blocks}
+
+
+def build_summary(f: dict) -> str:
+    path = urlsplit(f["url"]).path or "/"
+    return f"[{f['severity'].upper()}] {f['name']} - {path}"[:250]  # Jira limita el resumen a 255
+
+
+def owasp_label(owasp: str) -> str:
+    match = re.match(r"A(\d{2}):", owasp)
+    return f"owasp-a{match.group(1)}" if match else "owasp-sin-clasificar"
+
+
+def build_labels(f: dict) -> list[str]:
+    # Las etiquetas de Jira no admiten espacios
+    return [BASE_LABEL, f"severity-{f['severity']}", owasp_label(f["owasp"]), f"{FINGERPRINT_PREFIX}{f['fingerprint']}"]
+
+
+def existing_fingerprints(client: JiraClient) -> set[str]:
+    jql = f'project = "{client.project_key}" AND labels = "{BASE_LABEL}"'
+    issues = client.search_issues(jql, fields=["labels"])
+    return {
+        label[len(FINGERPRINT_PREFIX):]
+        for issue in issues
+        for label in issue["fields"]["labels"]
+        if label.startswith(FINGERPRINT_PREFIX)
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Crea issues de Jira a partir de findings.json")
+    parser.add_argument("--findings", type=Path, default=DEFAULT_FINDINGS)
+    parser.add_argument("--dry-run", action="store_true", help="Muestra qué se crearía, sin crear nada")
+    parser.add_argument("--limit", type=int, default=None, help="Máximo de tickets a crear en esta ejecución")
+    args = parser.parse_args()
+
+    findings = json.loads(args.findings.read_text())
+    client = JiraClient.from_env()
+    issue_type = os.getenv("JIRA_ISSUE_TYPE", "Task")
+    available = client.issue_type_names()
+    if issue_type not in available:
+        raise SystemExit(
+            f"JIRA_ISSUE_TYPE={issue_type!r} no existe en {client.project_key}. Tipos disponibles: {available}"
+        )
+    known = existing_fingerprints(client)
+    print(f"[ticketer] {len(findings)} hallazgos | {len(known)} ya tienen ticket en {client.project_key}")
+
+    created = skipped = failed = consecutive_failures = 0
+    for finding in findings:
+        if finding["fingerprint"] in known:
+            skipped += 1
+            continue
+        if args.limit is not None and created >= args.limit:
+            break
+
+        summary = build_summary(finding)
+        labels = build_labels(finding)
+        if args.dry_run:
+            print(f"[dry-run] {summary}  labels={labels}")
+            created += 1
+            continue
+
+        try:
+            key = client.create_issue(summary, build_description(finding), issue_type, labels)
+        except JiraError as exc:
+            failed += 1
+            consecutive_failures += 1
+            print(f"[error] {summary}\n        {exc}")
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                print(f"[ticketer] {MAX_CONSECUTIVE_FAILURES} fallos seguidos: abortando.")
+                break
+            continue
+
+        consecutive_failures = 0
+        known.add(finding["fingerprint"])
+        created += 1
+        print(f"[ok] {key}  {summary}")
+        time.sleep(0.2)
+
+    verb = "se crearían" if args.dry_run else "creados"
+    print(f"\nResumen: {verb}={created}  omitidos(ya existían)={skipped}  fallidos={failed}")
+
+
+if __name__ == "__main__":
+    main()

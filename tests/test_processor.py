@@ -73,3 +73,11 @@ def test_subtypes_of_same_plugin_are_not_merged(tmp_path):
     assert len(findings) == 2
     assert by_ref["90004-2"].owasp == "A04:2021 Insecure Design"
     assert by_ref["90004-3"].owasp == "Sin clasificar"
+
+def test_empty_path_equals_root(tmp_path):
+    report = make_report([
+        {"uri": "http://x", "method": "GET"},
+        {"uri": "http://x/", "method": "GET"},
+    ])
+    findings, _ = parse_report(write(tmp_path, report), {})
+    assert len(findings) == 1
