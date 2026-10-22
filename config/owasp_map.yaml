@@ -1,0 +1,11 @@
+# Fuente: etiquetas OWASP_2021_* de cada alerta en zaproxy.org/docs/alerts/<alertRef>
+# Clave: alertRef de ZAP (o pluginid si la regla no tiene subtipos)
+# Nota: la categoría es la clasificación de ZAP, una heurística y no un veredicto.
+"10038-1": "A05:2021 Security Misconfiguration"  # CSP Header Not Set
+"10063-1": "A01:2021 Broken Access Control"      # Permissions Policy Header Not Set
+"10063-2": "A01:2021 Broken Access Control"      # Deprecated Feature Policy Header Set
+"10098": "A01:2021 Broken Access Control"        # Cross-Domain Misconfiguration
+"10110": "A04:2021 Insecure Design"              # Dangerous JS Functions
+"90004-1": "A04:2021 Insecure Design"            # Cross-Origin-Resource-Policy
+"90004-2": "A04:2021 Insecure Design"            # Cross-Origin-Embedder-Policy
+"90004-3": "A04:2021 Insecure Design"            # Cross-Origin-Opener-Policy
