@@ -1,0 +1,8 @@
+# Plazo de remediación en días corridos, según la severidad EFECTIVA del hallazgo
+# (la que resulta de aplicar config/rules.yaml). El reloj parte el día en que se crea el ticket.
+sla_days:
+  critical: 3
+  high: 7
+  medium: 30
+  low: 90
+  info: 180

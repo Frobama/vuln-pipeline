@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from src.jira_client import JiraClient, JiraError
 from src.rules import DEFAULT_RULES_PATH, evaluate, load_rules
+from src.sla import DEFAULT_SLA_PATH, compute_due_date, load_sla
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FINDINGS = ROOT / "reports" / "findings.json"
@@ -46,6 +47,8 @@ def build_description(f: dict) -> dict:
         _field("Categoría OWASP", f["owasp"]),
         _field("URL afectada", f"{f['method']} {f['url']}"),
     ]
+    if f.get("sla_due"):
+        blocks.append(_field("Fecha límite (SLA)", f"{f['sla_due']} ({f['sla_days']} días corridos desde la creación)"))
     if f.get("param"):
         blocks.append(_field("Parámetro", f["param"]))
     if f.get("cwe_id"):
@@ -108,10 +111,12 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Muestra qué se crearía, sin crear nada")
     parser.add_argument("--limit", type=int, default=None, help="Máximo de tickets a crear en esta ejecución")
     parser.add_argument("--rules", type=Path, default=DEFAULT_RULES_PATH)
+    parser.add_argument("--sla", type=Path, default=DEFAULT_SLA_PATH)
     args = parser.parse_args()
 
     findings = json.loads(args.findings.read_text())
     rules = load_rules(args.rules)
+    sla = load_sla(args.sla)
     client = JiraClient.from_env()
     issue_type = os.getenv("JIRA_ISSUE_TYPE", "Task")
     available = client.issue_type_names()
@@ -132,11 +137,14 @@ def main() -> None:
             break
 
         decision = evaluate(finding, rules)
+        due_date = compute_due_date(decision.severity, sla)
         enriched = {
             **finding,
             "severity_reported": finding["severity"],
             "severity": decision.severity,
             "matched_rules": decision.matched_rules,
+            "sla_due": due_date.isoformat(),
+            "sla_days": sla[decision.severity],
         }
         account_id = resolve_assignee(decision.assignee)
         if decision.assignee and not account_id and decision.assignee not in warned:
@@ -147,15 +155,19 @@ def main() -> None:
         labels = build_labels(enriched, decision.labels)
         if args.dry_run:
             asignado = decision.assignee if account_id else f"{decision.assignee} (sin asignar)"
-            print(f"[dry-run] {summary}\n          responsable={asignado} labels={labels}")
+            print(f"[dry-run] {summary}\n          responsable={asignado} vence={due_date} labels={labels}")
             created += 1
             continue
 
         try:
-            key = client.create_issue(summary, build_description(enriched), issue_type, labels, account_id)
+            key = client.create_issue(
+                summary, build_description(enriched), issue_type, labels, account_id, due_date.isoformat()
+            )
         except JiraError as exc:
             failed += 1
             consecutive_failures += 1
+            if "duedate" in str(exc):
+                print("        Pista: el campo 'Fecha de vencimiento' no está disponible al crear issues en este proyecto (ver guía de la Fase 5).")
             print(f"[error] {summary}\n        {exc}")
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 print(f"[ticketer] {MAX_CONSECUTIVE_FAILURES} fallos seguidos: abortando.")

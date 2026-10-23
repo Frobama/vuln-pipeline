@@ -61,6 +61,7 @@ class JiraClient:
         issue_type: str,
         labels: list[str],
         assignee_account_id: str | None = None,
+        due_date: str | None = None,
     ) -> str:
         fields: dict[str, Any] = {
             "project": {"key": self.project_key},
@@ -71,6 +72,8 @@ class JiraClient:
         }
         if assignee_account_id:
             fields["assignee"] = {"accountId": assignee_account_id}
+        if due_date:
+            fields["duedate"] = due_date  # formato AAAA-MM-DD
         return self._request("POST", "/rest/api/3/issue", json={"fields": fields})["key"]
 
     def delete_issue(self, issue_key: str) -> None:
