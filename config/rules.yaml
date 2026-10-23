@@ -1,0 +1,40 @@
+# Reglas de asignación y escalamiento.
+# - Una regla coincide si se cumplen TODAS las condiciones de `match`
+#   (dentro de una lista basta que coincida un elemento).
+# - labels: se acumulan de todas las reglas que coinciden.
+# - assignee: gana la primera regla (en orden) que lo define; si ninguna, defaults.assignee.
+# - severity: solo puede ESCALAR la severidad, nunca bajarla.
+# - Los responsables son claves lógicas: el accountId real se lee de JIRA_ASSIGNEE_<CLAVE>.
+# Condiciones válidas: severity, owasp (prefijo, ej. "A05"), alert_ref, name_regex, url_regex.
+
+defaults:
+  assignee: appsec
+
+rules:
+  - name: Exposición de archivos en /ftp
+    match:
+      url_regex: "/ftp"
+    actions:
+      severity: critical
+      labels: [exposicion-datos, prioridad-negocio]
+
+  - name: Aislamiento cross-origin (CORP/COEP/COOP)
+    match:
+      alert_ref: ["90004-1", "90004-2", "90004-3"]
+    actions:
+      assignee: plataforma
+      labels: [hardening-headers, equipo-plataforma]
+
+  - name: Configuración de seguridad (A05)
+    match:
+      owasp: ["A05"]
+    actions:
+      assignee: plataforma
+      labels: [hardening-headers, equipo-plataforma]
+
+  - name: JavaScript peligroso en el frontend
+    match:
+      alert_ref: ["10110"]
+    actions:
+      assignee: frontend
+      labels: [frontend, revision-codigo]

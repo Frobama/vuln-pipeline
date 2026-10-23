@@ -54,18 +54,27 @@ class JiraClient:
         project = self._request("GET", f"/rest/api/3/project/{self.project_key}")
         return [issue_type["name"] for issue_type in project.get("issueTypes", [])]
 
-    def create_issue(self, summary: str, description: dict, issue_type: str, labels: list[str]) -> str:
-        payload = {
-            "fields": {
-                "project": {"key": self.project_key},
-                "issuetype": {"name": issue_type},
-                "summary": summary,
-                "description": description,
-                "labels": labels,
-            }
+    def create_issue(
+        self,
+        summary: str,
+        description: dict,
+        issue_type: str,
+        labels: list[str],
+        assignee_account_id: str | None = None,
+    ) -> str:
+        fields: dict[str, Any] = {
+            "project": {"key": self.project_key},
+            "issuetype": {"name": issue_type},
+            "summary": summary,
+            "description": description,
+            "labels": labels,
         }
-        return self._request("POST", "/rest/api/3/issue", json=payload)["key"]
+        if assignee_account_id:
+            fields["assignee"] = {"accountId": assignee_account_id}
+        return self._request("POST", "/rest/api/3/issue", json={"fields": fields})["key"]
 
+    def delete_issue(self, issue_key: str) -> None:
+        self._request("DELETE", f"/rest/api/3/issue/{issue_key}")
 
     def search_issues(self, jql: str, fields: list[str]) -> list[dict]:
         """Búsqueda JQL con paginación por token."""

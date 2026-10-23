@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from src.jira_client import JiraClient, JiraError
+from src.rules import DEFAULT_RULES_PATH, evaluate, load_rules
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_FINDINGS = ROOT / "reports" / "findings.json"
@@ -38,7 +39,10 @@ def _field(label: str, value: str) -> dict:
 
 def build_description(f: dict) -> dict:
     blocks = [
-        _field("Severidad", f"{f['severity']} (confianza ZAP: {f['confidence']})"),
+        _field(
+            "Severidad",
+            f"{f['severity']} (ZAP reportó: {f.get('severity_reported', f['severity'])}; confianza: {f['confidence']})",
+        ),
         _field("Categoría OWASP", f["owasp"]),
         _field("URL afectada", f"{f['method']} {f['url']}"),
     ]
@@ -54,6 +58,8 @@ def build_description(f: dict) -> dict:
         blocks += [_heading("Evidencia"), {"type": "codeBlock", "content": [_text(f["evidence"][:500])]}]
     if f.get("reference"):
         blocks += [_heading("Referencias"), *_paragraphs(f["reference"])]
+    if f.get("matched_rules"):
+        blocks.append(_field("Reglas aplicadas", "; ".join(f["matched_rules"])))
     blocks.append(
         _paragraph(_text(f"ID del hallazgo: {f['fingerprint']} · generado automáticamente por vuln-pipeline a partir de un escaneo ZAP."))
     )
@@ -70,10 +76,20 @@ def owasp_label(owasp: str) -> str:
     return f"owasp-a{match.group(1)}" if match else "owasp-sin-clasificar"
 
 
-def build_labels(f: dict) -> list[str]:
+def build_labels(f: dict, extra: list[str] | tuple = ()) -> list[str]:
     # Las etiquetas de Jira no admiten espacios
-    return [BASE_LABEL, f"severity-{f['severity']}", owasp_label(f["owasp"]), f"{FINGERPRINT_PREFIX}{f['fingerprint']}"]
+    labels = [BASE_LABEL, f"severity-{f['severity']}", owasp_label(f["owasp"]), f"{FINGERPRINT_PREFIX}{f['fingerprint']}"]
+    if f.get("severity_reported", f["severity"]) != f["severity"]:
+        labels.append("severity-escalated")
+    labels += [label for label in extra if label not in labels]
+    return labels
 
+
+def resolve_assignee(key: str | None) -> str | None:
+    """Clave lógica ('appsec') -> accountId, leído de JIRA_ASSIGNEE_APPSEC. Nada de IDs en el repo."""
+    if not key:
+        return None
+    return os.getenv(f"JIRA_ASSIGNEE_{key.upper()}", "").strip() or None
 
 def existing_fingerprints(client: JiraClient) -> set[str]:
     jql = f'project = "{client.project_key}" AND labels = "{BASE_LABEL}"'
@@ -91,9 +107,11 @@ def main() -> None:
     parser.add_argument("--findings", type=Path, default=DEFAULT_FINDINGS)
     parser.add_argument("--dry-run", action="store_true", help="Muestra qué se crearía, sin crear nada")
     parser.add_argument("--limit", type=int, default=None, help="Máximo de tickets a crear en esta ejecución")
+    parser.add_argument("--rules", type=Path, default=DEFAULT_RULES_PATH)
     args = parser.parse_args()
 
     findings = json.loads(args.findings.read_text())
+    rules = load_rules(args.rules)
     client = JiraClient.from_env()
     issue_type = os.getenv("JIRA_ISSUE_TYPE", "Task")
     available = client.issue_type_names()
@@ -105,6 +123,7 @@ def main() -> None:
     print(f"[ticketer] {len(findings)} hallazgos | {len(known)} ya tienen ticket en {client.project_key}")
 
     created = skipped = failed = consecutive_failures = 0
+    warned = set()
     for finding in findings:
         if finding["fingerprint"] in known:
             skipped += 1
@@ -112,15 +131,28 @@ def main() -> None:
         if args.limit is not None and created >= args.limit:
             break
 
-        summary = build_summary(finding)
-        labels = build_labels(finding)
+        decision = evaluate(finding, rules)
+        enriched = {
+            **finding,
+            "severity_reported": finding["severity"],
+            "severity": decision.severity,
+            "matched_rules": decision.matched_rules,
+        }
+        account_id = resolve_assignee(decision.assignee)
+        if decision.assignee and not account_id and decision.assignee not in warned:
+            warned.add(decision.assignee)
+            print(f"[aviso] JIRA_ASSIGNEE_{decision.assignee.upper()} no está definida: esos tickets quedarán sin asignar")
+
+        summary = build_summary(enriched)
+        labels = build_labels(enriched, decision.labels)
         if args.dry_run:
-            print(f"[dry-run] {summary}  labels={labels}")
+            asignado = decision.assignee if account_id else f"{decision.assignee} (sin asignar)"
+            print(f"[dry-run] {summary}\n          responsable={asignado} labels={labels}")
             created += 1
             continue
 
         try:
-            key = client.create_issue(summary, build_description(finding), issue_type, labels)
+            key = client.create_issue(summary, build_description(enriched), issue_type, labels, account_id)
         except JiraError as exc:
             failed += 1
             consecutive_failures += 1
