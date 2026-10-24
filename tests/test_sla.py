@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from src.sla import SlaConfigError, compute_due_date, load_sla
+from src.sla import SlaConfigError, compute_due_date, load_sla, load_warn_days
 
 SLA = {"info": 180, "low": 90, "medium": 30, "high": 7, "critical": 3}
 
@@ -42,3 +42,14 @@ def test_non_integer_days_are_rejected(tmp_path):
     path = write(tmp_path, "sla_days: {info: 180, low: 90, medium: '30', high: 7, critical: 3}\n")
     with pytest.raises(SlaConfigError):
         load_sla(path)
+
+def test_real_warn_days_are_valid():
+    assert set(load_warn_days()) == {"info", "low", "medium", "high", "critical"}
+
+
+def test_warn_must_be_shorter_than_sla(tmp_path):
+    path = write(tmp_path, """sla_days: {info: 180, low: 90, medium: 30, high: 7, critical: 3}
+warn_before_days: {info: 30, low: 14, medium: 7, high: 7, critical: 1}
+""")
+    with pytest.raises(SlaConfigError):
+        load_warn_days(path)

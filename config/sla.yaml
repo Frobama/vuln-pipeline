@@ -6,3 +6,12 @@ sla_days:
   medium: 30
   low: 90
   info: 180
+
+# Avisar cuando falten N días o menos para el vencimiento (por severidad).
+# Debe ser menor que el plazo de sla_days.
+warn_before_days:
+  critical: 1
+  high: 2
+  medium: 7
+  low: 14
+  info: 30

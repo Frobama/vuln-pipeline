@@ -79,6 +79,15 @@ class JiraClient:
     def delete_issue(self, issue_key: str) -> None:
         self._request("DELETE", f"/rest/api/3/issue/{issue_key}")
 
+    def add_comment(self, issue_key: str, text: str) -> None:
+        body = {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}]}
+        self._request("POST", f"/rest/api/3/issue/{issue_key}/comment", json={"body": body})
+
+    def add_labels(self, issue_key: str, labels: list[str]) -> None:
+        """Agrega etiquetas sin tocar las existentes (operación 'add')."""
+        update = {"update": {"labels": [{"add": label} for label in labels]}}
+        self._request("PUT", f"/rest/api/3/issue/{issue_key}", json=update)
+
     def search_issues(self, jql: str, fields: list[str]) -> list[dict]:
         """Búsqueda JQL con paginación por token."""
         issues: list[dict] = []
