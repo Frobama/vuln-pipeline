@@ -15,7 +15,6 @@ Es un proyecto de portafolio: replica, en versión reducida, el tipo de automati
 | SLA y fecha límite en el ticket | Hecho |
 | Alertas de SLA (consola, comentario en el ticket, webhook de Slack/Discord) | Hecho |
 | Webhook de Jira y validación de remediación (re-escaneo) | En desarrollo |
-| Resumen y priorización con un LLM | Pendiente (opcional) |
 
 ## Arquitectura
 
